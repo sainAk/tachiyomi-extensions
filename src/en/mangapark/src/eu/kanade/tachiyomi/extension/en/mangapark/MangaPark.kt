@@ -4,8 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.content.SharedPreferences
 import android.net.Uri
-import android.support.v7.preference.ListPreference
-import android.support.v7.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
@@ -15,14 +13,18 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import eu.kanade.tachiyomi.util.asJsoup
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.CacheControl
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONArray
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -35,10 +37,10 @@ class MangaPark : ConfigurableSource, ParsedHttpSource() {
 
     override val supportsLatest = true
     override val name = "MangaPark"
-    override val baseUrl = "https://mangapark.net"
+    override val baseUrl = "https://v2.mangapark.net"
 
     private val nextPageSelector = ".paging:not(.order) > li:last-child > a"
-
+    private val json: Json by injectLazy()
     private val dateFormat = SimpleDateFormat("MMM d, yyyy, HH:mm a", Locale.ENGLISH)
     private val dateFormatTimeOnly = SimpleDateFormat("HH:mm a", Locale.ENGLISH)
 
@@ -115,6 +117,17 @@ class MangaPark : ConfigurableSource, ParsedHttpSource() {
         }
 
         description = document.getElementsByClass("summary").text().trim()
+
+        // add alternative name to manga description
+        val altName = "Alternative Name: "
+        document.select(".attr > tbody > tr:contains(Alter) td").firstOrNull()?.ownText()?.let {
+            if (it.isEmpty().not()) {
+                description += when {
+                    description!!.isEmpty() -> altName + it
+                    else -> "\n\n$altName" + it
+                }
+            }
+        }
     }
 
     // force network to make sure chapter prefs take effect
@@ -267,11 +280,13 @@ class MangaPark : ConfigurableSource, ParsedHttpSource() {
     private val objRegex = Regex("""var _load_pages = (\[.*])""")
 
     override fun pageListParse(response: Response): List<Page> {
-        val obj = objRegex.find(response.body()!!.string())?.groupValues?.get(1)
-            ?: throw Exception("_load_pages not found - ${response.request().url()}")
-        val jsonArray = JSONArray(obj)
-        return (0 until jsonArray.length()).map { i -> jsonArray.getJSONObject(i).getString("u") }
-            .mapIndexed { i, url -> Page(i, "", if (url.startsWith("//")) "https://$url" else url) }
+        val obj = objRegex.find(response.body!!.string())?.groupValues?.get(1)
+            ?: throw Exception("_load_pages not found - ${response.request.url}")
+
+        return json.parseToJsonElement(obj).jsonArray.mapIndexed { i, it ->
+            val url = it.jsonObject["u"]!!.jsonPrimitive.content
+            Page(i, imageUrl = if (url.startsWith("//")) "https://$url" else url)
+        }
     }
 
     override fun pageListParse(document: Document): List<Page> = throw UnsupportedOperationException("Not used")
@@ -578,23 +593,6 @@ class MangaPark : ConfigurableSource, ParsedHttpSource() {
         screen.addPreference(myPref)
     }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val myPref = ListPreference(screen.context).apply {
-            key = SOURCE_PREF_TITLE
-            title = SOURCE_PREF_TITLE
-            entries = sourceArray.map { it.first }.toTypedArray()
-            entryValues = sourceArray.map { it.second }.toTypedArray()
-            summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = this.findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(SOURCE_PREF, entry).commit()
-            }
-        }
-        screen.addPreference(myPref)
-    }
     private fun getSourcePref(): String? = preferences.getString(SOURCE_PREF, "all")
 
     companion object {

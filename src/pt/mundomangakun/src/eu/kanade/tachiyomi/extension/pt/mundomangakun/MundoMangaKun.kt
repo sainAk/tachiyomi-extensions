@@ -1,9 +1,6 @@
 package eu.kanade.tachiyomi.extension.pt.mundomangakun
 
-import com.github.salomonbrys.kotson.array
-import com.github.salomonbrys.kotson.obj
-import com.github.salomonbrys.kotson.string
-import com.google.gson.JsonParser
+import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -11,13 +8,19 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
-import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.lang.UnsupportedOperationException
+import uy.kohesive.injekt.injectLazy
+import java.util.concurrent.TimeUnit
 
 class MundoMangaKun : ParsedHttpSource() {
 
@@ -29,10 +32,16 @@ class MundoMangaKun : ParsedHttpSource() {
 
     override val supportsLatest = false
 
+    override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(RateLimitInterceptor(1, 1, TimeUnit.SECONDS))
+        .build()
+
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", USER_AGENT)
         .add("Origin", baseUrl)
         .add("Referer", baseUrl)
+
+    private val json: Json by injectLazy()
 
     override fun popularMangaRequest(page: Int): Request {
         val refererPath = if (page <= 2) "" else "/leitor-online/${page - 1}"
@@ -63,7 +72,7 @@ class MundoMangaKun : ParsedHttpSource() {
             .build()
 
         val pagePath = if (page != 1) "page/$page/" else ""
-        val url = HttpUrl.parse("$baseUrl/leitor-online/$pagePath")!!.newBuilder()
+        val url = "$baseUrl/leitor-online/$pagePath".toHttpUrlOrNull()!!.newBuilder()
             .addQueryParameter("leitor_titulo_projeto", query)
 
         filters.forEach { filter ->
@@ -118,20 +127,21 @@ class MundoMangaKun : ParsedHttpSource() {
         val link = element.attr("onclick")
             .substringAfter("this,")
             .substringBeforeLast(")")
-            .let { JSON_PARSER.parse(it) }
-            .array
-            .first { it.obj["tipo"].string == "LEITOR" }
+            .replace("'", "\"")
+            .let { json.parseToJsonElement(it) }
+            .jsonArray
+            .first { it.jsonObject["tipo"]!!.jsonPrimitive.content == "LEITOR" }
 
-        setUrlWithoutDomain(link.obj["link"].string)
+        setUrlWithoutDomain(link.jsonObject["link"]!!.jsonPrimitive.content)
     }
 
     override fun pageListParse(document: Document): List<Page> {
         return document.select("script:containsData(var paginas)").first().data()
             .substringAfter("var paginas=")
             .substringBefore(";var")
-            .let { JSON_PARSER.parse(it) }
-            .array
-            .mapIndexed { i, page -> Page(i, document.location(), page.string) }
+            .let { json.parseToJsonElement(it) }
+            .jsonArray
+            .mapIndexed { i, page -> Page(i, document.location(), page.jsonPrimitive.content) }
     }
 
     override fun imageUrlParse(document: Document) = ""
@@ -230,8 +240,6 @@ class MundoMangaKun : ParsedHttpSource() {
 
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36"
-
-        private val JSON_PARSER by lazy { JsonParser() }
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36"
     }
 }

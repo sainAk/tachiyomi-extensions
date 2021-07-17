@@ -1,12 +1,14 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'kotlinx-serialization'
 
 ext {
     extName = 'Tsuki Mangás'
     pkgNameSuffix = 'pt.tsukimangas'
     extClass = '.TsukiMangas'
-    extVersionCode = 8
+    extVersionCode = 21
     libVersion = '1.2'
+    containsNsfw = true
 }
 
 dependencies {

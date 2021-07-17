@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.pt.taosect
 
+import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -8,15 +9,16 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
-import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.lang.UnsupportedOperationException
 import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class TaoSect : ParsedHttpSource() {
 
@@ -27,6 +29,10 @@ class TaoSect : ParsedHttpSource() {
     override val lang = "pt-BR"
 
     override val supportsLatest = false
+
+    override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(RateLimitInterceptor(1, 1, TimeUnit.SECONDS))
+        .build()
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", USER_AGENT)
@@ -53,7 +59,7 @@ class TaoSect : ParsedHttpSource() {
     override fun popularMangaNextPageSelector(): String? = null
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = HttpUrl.parse("$baseUrl/pesquisar-leitor")!!.newBuilder()
+        val url = "$baseUrl/pesquisar-leitor".toHttpUrlOrNull()!!.newBuilder()
             .addQueryParameter("leitor_titulo_projeto", query)
 
         filters.forEach { filter ->
@@ -111,22 +117,22 @@ class TaoSect : ParsedHttpSource() {
         title = header.select("h1.titulo-projeto")!!.text()
         author = header.select("table.tabela-projeto tr:eq(1) td:eq(1)")!!.text()
         artist = header.select("table.tabela-projeto tr:eq(0) td:eq(1)")!!.text()
-        genre = header.select("table.tabela-projeto tr:eq(10) a").joinToString { it.text() }
-        status = header.select("table.tabela-projeto tr:eq(4) td:eq(1)")!!.text().toStatus()
-        description = header.select("table.tabela-projeto tr:eq(9) p")!!.text()
-        thumbnail_url = header.select("div.imagens-projeto img[alt]").first()!!.attr("src")
+        genre = header.select("table.tabela-projeto tr:eq(11) a").joinToString { it.text() }
+        status = header.select("table.tabela-projeto tr:eq(5) td:eq(1)")!!.text().toStatus()
+        description = header.select("table.tabela-projeto tr:eq(10) p")!!.text()
+        thumbnail_url = header.select("div.imagens-projeto img[alt]").first()!!.attr("data-src")
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
         return super.chapterListParse(response).reversed()
     }
 
-    override fun chapterListSelector() = "table.tabela-volumes tr:not(:first-child)"
+    override fun chapterListSelector() = "table.tabela-volumes tr"
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
         name = element.select("td[align='left'] a")!!.text()
         scanlator = this@TaoSect.name
-        date_upload = DATE_FORMATTER.tryParseTime(element.select("td[align='right']")!!.text())
+        date_upload = element.select("td[align='right']")!!.text().toDate()
         setUrlWithoutDomain(element.select("td[align='left'] a")!!.attr("href"))
     }
 
@@ -194,17 +200,17 @@ class TaoSect : ParsedHttpSource() {
 
     override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException("Not used")
 
-    private fun SimpleDateFormat.tryParseTime(date: String): Long {
+    private fun String.toDate(): Long {
         return try {
-            parse(date)!!.time
+            DATE_FORMATTER.parse(this)?.time ?: 0L
         } catch (e: ParseException) {
             0L
         }
     }
 
-    private fun String.toStatus() = when {
-        contains("Ativo") -> SManga.ONGOING
-        contains("Finalizado") || contains("Oneshots") -> SManga.COMPLETED
+    private fun String.toStatus() = when (this) {
+        "Ativos" -> SManga.ONGOING
+        "Finalizados", "Oneshots" -> SManga.COMPLETED
         else -> SManga.UNKNOWN
     }
 
@@ -256,9 +262,12 @@ class TaoSect : ParsedHttpSource() {
     )
 
     companion object {
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36"
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36"
 
-        private val DATE_FORMATTER by lazy { SimpleDateFormat("(dd/MM/yyyy)", Locale.ENGLISH) }
+        private val DATE_FORMATTER by lazy {
+            SimpleDateFormat("(dd/MM/yyyy)", Locale.ENGLISH)
+        }
 
         private val SORT_LIST = listOf(
             Triple("a_z", "z_a", "Nome"),

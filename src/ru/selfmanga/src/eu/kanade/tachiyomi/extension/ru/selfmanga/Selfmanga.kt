@@ -8,7 +8,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
-import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -22,7 +22,7 @@ class Selfmanga : ParsedHttpSource() {
 
     override val name = "Selfmanga"
 
-    override val baseUrl = "https://selfmanga.ru"
+    override val baseUrl = "https://selfmanga.live"
 
     override val lang = "ru"
 
@@ -30,13 +30,13 @@ class Selfmanga : ParsedHttpSource() {
 
     override fun popularMangaSelector() = "div.tile"
 
-    override fun latestUpdatesSelector() = "div.tile"
+    override fun latestUpdatesSelector() = popularMangaSelector()
 
     override fun popularMangaRequest(page: Int): Request =
-        GET("$baseUrl/list?sortType=rate&offset=${70 * (page - 1)}&max=70", headers)
+        GET("$baseUrl/list?sortType=rate&offset=${70 * (page - 1)}", headers)
 
     override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/list?sortType=updated&offset=${70 * (page - 1)}&max=70", headers)
+        GET("$baseUrl/list?sortType=updated&offset=${70 * (page - 1)}", headers)
 
     override fun popularMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
@@ -53,10 +53,10 @@ class Selfmanga : ParsedHttpSource() {
 
     override fun popularMangaNextPageSelector() = "a.nextLink"
 
-    override fun latestUpdatesNextPageSelector() = "a.nextLink"
+    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = HttpUrl.parse("$baseUrl/search/advanced")!!.newBuilder()
+        val url = "$baseUrl/search/advanced".toHttpUrlOrNull()!!.newBuilder()
         (if (filters.isEmpty()) getFilterList() else filters).forEach { filter ->
             when (filter) {
                 is GenreList -> filter.state.forEach { genre ->
@@ -85,9 +85,10 @@ class Selfmanga : ParsedHttpSource() {
     override fun searchMangaNextPageSelector(): Nothing? = null
 
     override fun mangaDetailsParse(document: Document): SManga {
-        val infoElement = document.select("div.leftContent").first()
+        val infoElement = document.select(".expandable").first()
 
         val manga = SManga.create()
+        manga.title = document.select("h1.names .name").text()
         manga.author = infoElement.select("span.elem_author").first()?.text()
         manga.genre = infoElement.select("span.elem_genre").text().replace(" ,", ",")
         manga.description = infoElement.select("div.manga-description").text()
@@ -97,8 +98,8 @@ class Selfmanga : ParsedHttpSource() {
     }
 
     private fun parseStatus(element: String): Int = when {
-        element.contains("<h3>Запрещена публикация произведения по копирайту</h3>") -> SManga.LICENSED
-        element.contains("<h1 class=\"names\"> Сингл") || element.contains("выпуск завершен") -> SManga.COMPLETED
+        element.contains("Запрещена публикация произведения по копирайту") || element.contains("ЗАПРЕЩЕНА К ПУБЛИКАЦИИ НА ТЕРРИТОРИИ РФ!") -> SManga.LICENSED
+        element.contains("<b>Сингл</b>") || element.contains("выпуск завершен") -> SManga.COMPLETED
         element.contains("выпуск продолжается") -> SManga.ONGOING
         else -> SManga.UNKNOWN
     }
@@ -145,7 +146,7 @@ class Selfmanga : ParsedHttpSource() {
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val html = response.body()!!.string()
+        val html = response.body!!.string()
         val beginIndex = html.indexOf("rm_h.init( [")
         val endIndex = html.indexOf(");", beginIndex)
         val trimmedHtml = html.substring(beginIndex, endIndex)

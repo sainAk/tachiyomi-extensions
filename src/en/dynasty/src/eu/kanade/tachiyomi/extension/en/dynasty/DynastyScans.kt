@@ -2,20 +2,27 @@ package eu.kanade.tachiyomi.extension.en.dynasty
 
 import android.net.Uri
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import eu.kanade.tachiyomi.util.asJsoup
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONArray
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 import org.jsoup.select.Elements
+import rx.Observable
+import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.ArrayList
 import java.util.Locale
@@ -30,6 +37,8 @@ abstract class DynastyScans : ParsedHttpSource() {
 
     override val supportsLatest = false
 
+    open val searchPrefix = ""
+
     private var parent: List<Node> = ArrayList()
 
     private var list = InternalList(ArrayList(), "")
@@ -37,6 +46,8 @@ abstract class DynastyScans : ParsedHttpSource() {
     private var imgList = InternalList(ArrayList(), "")
 
     private var _valid: Validate = Validate(false, -1)
+
+    private val json: Json by injectLazy()
 
     override fun popularMangaRequest(page: Int): Request {
         return GET(popularMangaInitialUrl(), headers)
@@ -56,6 +67,24 @@ abstract class DynastyScans : ParsedHttpSource() {
             popularMangaFromElement(element)
         }
         return MangasPage(mangas, false)
+    }
+
+    override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
+        if (query.startsWith("manga:")) {
+            return if (query.startsWith("manga:$searchPrefix:")) {
+                val newQuery = query.removePrefix("manga:$searchPrefix:")
+                client.newCall(GET("$baseUrl/$searchPrefix/$newQuery"))
+                    .asObservableSuccess()
+                    .map { response ->
+                        val details = mangaDetailsParse(response)
+                        details.url = "/$searchPrefix/$newQuery"
+                        MangasPage(listOf(details), false)
+                    }
+            } else {
+                return Observable.just(MangasPage(ArrayList<SManga>(0), false))
+            }
+        }
+        return super.fetchSearchManga(page, query, filters)
     }
 
     override fun searchMangaSelector() = "a.name"
@@ -166,19 +195,16 @@ abstract class DynastyScans : ParsedHttpSource() {
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        val pages = mutableListOf<Page>()
-        try {
+        return try {
             val imageUrl = document.select("script").last().html().substringAfter("var pages = [").substringBefore("];")
-            val imageUrls = JSONArray("[$imageUrl]")
 
-            (0 until imageUrls.length())
-                .map { imageUrls.getJSONObject(it) }
-                .map { baseUrl + it.get("image") }
-                .forEach { pages.add(Page(pages.size, "", it)) }
+            json.parseToJsonElement("[$imageUrl]").jsonArray.mapIndexed { index, it ->
+                Page(index, imageUrl = "$baseUrl${it.jsonObject["image"]!!.jsonPrimitive.content}")
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            emptyList()
         }
-        return pages
     }
 
     class InternalList(nodes: List<Node>, type: String) : ArrayList<String>() {

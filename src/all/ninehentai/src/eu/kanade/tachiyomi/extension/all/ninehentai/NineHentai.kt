@@ -8,6 +8,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import eu.kanade.tachiyomi.annotations.Nsfw
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.source.model.Filter
@@ -18,18 +19,18 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.asJsoup
-import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
 import rx.Observable
-import java.util.Date
+import java.util.Calendar
 
 @Nsfw
 class NineHentai : HttpSource() {
 
-    override val baseUrl = "https://9hentai.ru"
+    override val baseUrl = "https://9hentai.to"
 
     override val name = "NineHentai"
 
@@ -74,7 +75,7 @@ class NineHentai : HttpSource() {
     }
 
     private fun getMangaList(response: Response, page: Int): MangasPage {
-        val jsonData = response.body()!!.string()
+        val jsonData = response.body!!.string()
         val jsonObject = JsonParser().parse(jsonData).asJsonObject
         val totalPages = jsonObject["total_count"].int
         val results = jsonObject["results"].array
@@ -97,15 +98,48 @@ class NineHentai : HttpSource() {
         return mutableList
     }
 
-    override fun fetchChapterList(manga: SManga): Observable<List<SChapter>> {
-        val chapter = SChapter.create()
-        val chapterId = manga.url.substringAfter("/g/").toInt()
-        chapter.url = "/g/$chapterId"
-        chapter.name = "chapter"
-        // api doesnt return date so setting to current date for now
-        chapter.date_upload = Date().time
+    override fun chapterListParse(response: Response): List<SChapter> {
+        val document = response.asJsoup()
+        val time = document.select("div#info div time").text()
+        return listOf(
+            SChapter.create().apply {
+                name = "Chapter"
+                date_upload = parseChapterDate(time)
+                setUrlWithoutDomain(response.request.url.encodedPath)
+            }
+        )
+    }
 
-        return Observable.just(listOf(chapter))
+    private fun parseChapterDate(date: String): Long {
+        val value = date.split(' ')[0].toInt()
+        val timeStr = date.split(' ')[1].removeSuffix("s")
+
+        return when (timeStr) {
+            "sec" -> Calendar.getInstance().apply {
+                add(Calendar.SECOND, value * -1)
+            }.timeInMillis
+            "min" -> Calendar.getInstance().apply {
+                add(Calendar.MINUTE, value * -1)
+            }.timeInMillis
+            "hour" -> Calendar.getInstance().apply {
+                add(Calendar.HOUR_OF_DAY, value * -1)
+            }.timeInMillis
+            "day" -> Calendar.getInstance().apply {
+                add(Calendar.DATE, value * -1)
+            }.timeInMillis
+            "week" -> Calendar.getInstance().apply {
+                add(Calendar.DATE, value * 7 * -1)
+            }.timeInMillis
+            "month" -> Calendar.getInstance().apply {
+                add(Calendar.MONTH, value * -1)
+            }.timeInMillis
+            "year" -> Calendar.getInstance().apply {
+                add(Calendar.YEAR, value * -1)
+            }.timeInMillis
+            else -> {
+                return 0
+            }
+        }
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
@@ -149,7 +183,7 @@ class NineHentai : HttpSource() {
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val jsonData = response.body()!!.string()
+        val jsonData = response.body!!.string()
         val jsonObject = JsonParser().parse(jsonData).asJsonObject
         val jsonArray = jsonObject.getAsJsonObject("results")
         var imageUrl: String
@@ -161,6 +195,15 @@ class NineHentai : HttpSource() {
             totalPages = json["total_page"].int
         }
         val pages = mutableListOf<Page>()
+
+        client.newCall(
+            GET(
+                "$imageUrl/preview/${totalPages}t.jpg",
+                headersBuilder().build()
+            )
+        ).execute().code.let { code ->
+            if (code == 404) totalPages--
+        }
 
         for (i in 1..totalPages) {
             pages.add(Page(pages.size, "", "$imageUrl/$i.jpg"))
@@ -193,18 +236,14 @@ class NineHentai : HttpSource() {
 
     override fun imageUrlParse(response: Response): String = throw Exception("Not Used")
 
-    override fun chapterListRequest(manga: SManga): Request = throw Exception("Not Used")
-
     override fun popularMangaParse(response: Response): MangasPage = throw Exception("Not Used")
 
     override fun latestUpdatesParse(response: Response): MangasPage = throw Exception("Not Used")
 
     override fun searchMangaParse(response: Response): MangasPage = throw Exception("Not Used")
 
-    override fun chapterListParse(response: Response): List<SChapter> = throw Exception("Not Used")
-
     companion object {
-        private val MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8")
+        private val MEDIA_TYPE = "application/json; charset=utf-8".toMediaTypeOrNull()
         private const val SEARCH_URL = "/api/getBook"
         private const val MANGA_URL = "/api/getBookByID"
     }

@@ -32,10 +32,11 @@ import rx.Observable
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
-import android.support.v7.preference.CheckBoxPreference as LegacyCheckBoxPreference
-import android.support.v7.preference.PreferenceScreen as LegacyPreferenceScreen
 
-open class EHentai(override val lang: String, private val ehLang: String) : ConfigurableSource, HttpSource() {
+abstract class EHentai(
+    override val lang: String,
+    private val ehLang: String
+) : ConfigurableSource, HttpSource() {
 
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
@@ -196,7 +197,7 @@ open class EHentai(override val lang: String, private val ehLang: String) : Conf
     @SuppressLint("DefaultLocale")
     override fun mangaDetailsParse(response: Response) = with(response.asJsoup()) {
         with(ExGalleryMetadata()) {
-            url = response.request().url().encodedPath()
+            url = response.request.url.encodedPath
             title = select("#gn").text().nullIfBlank()?.trim()
 
             altTitle = select("#gj").text().nullIfBlank()?.trim()
@@ -501,21 +502,6 @@ open class EHentai(override val lang: String, private val ehLang: String) : Conf
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val enforceLanguagePref = CheckBoxPreference(screen.context).apply {
-            key = "${ENFORCE_LANGUAGE_PREF_KEY}_$lang"
-            title = ENFORCE_LANGUAGE_PREF_TITLE
-            summary = ENFORCE_LANGUAGE_PREF_SUMMARY
-            setDefaultValue(ENFORCE_LANGUAGE_PREF_DEFAULT_VALUE)
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val checkValue = newValue as Boolean
-                preferences.edit().putBoolean("${ENFORCE_LANGUAGE_PREF_KEY}_$lang", checkValue).commit()
-            }
-        }
-        screen.addPreference(enforceLanguagePref)
-    }
-
-    override fun setupPreferenceScreen(screen: LegacyPreferenceScreen) {
-        val enforceLanguagePref = LegacyCheckBoxPreference(screen.context).apply {
             key = "${ENFORCE_LANGUAGE_PREF_KEY}_$lang"
             title = ENFORCE_LANGUAGE_PREF_TITLE
             summary = ENFORCE_LANGUAGE_PREF_SUMMARY

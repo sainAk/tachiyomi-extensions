@@ -8,7 +8,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
-import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -17,7 +17,11 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-open class NineManga(override val name: String, override val baseUrl: String, override val lang: String) : ParsedHttpSource() {
+open class NineManga(
+    override val name: String,
+    override val baseUrl: String,
+    override val lang: String
+) : ParsedHttpSource() {
 
     override val supportsLatest: Boolean = true
 
@@ -113,7 +117,7 @@ open class NineManga(override val name: String, override val baseUrl: String, ov
     override fun imageUrlParse(document: Document) = document.select("div.pic_box img.manga_pic").first().attr("src").orEmpty()
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = HttpUrl.parse("$baseUrl/search/")!!.newBuilder()
+        val url = "$baseUrl/search/".toHttpUrlOrNull()!!.newBuilder()
 
         url.addQueryParameter("wd", query)
         url.addQueryParameter("page", page.toString())
